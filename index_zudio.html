@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zudio Hoarding Analysis</title>
+
+<!-- exifr: tiny library to parse GPS from photo EXIF, loaded from CDN -->
+<script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
+
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%;
+               font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+               background: #f7f8fa; color: #222; font-size: 14px; }
+  .chat { display: flex; flex-direction: column; height: 100vh; }
+
+  /* Header */
+  .header { background: #c8102e; color: #fff; padding: 10px 16px;
+            display: flex; justify-content: space-between; align-items: center; }
+  .header-left { font-weight: 600; font-size: 15px; }
+  .header-left span { font-weight: 400; opacity: .85; font-size: 12px; margin-left: 8px; }
+  .auth-btn { background: rgba(255,255,255,.18); color: #fff; border: 1px solid rgba(255,255,255,.4);
+              border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 12px;
+              font-weight: 500; }
+  .auth-btn:hover { background: rgba(255,255,255,.3); }
+  .auth-btn.signed-in { background: #0a7c0a; border-color: #0a7c0a; }
+
+  /* Upload panel */
+  .upload-panel { background: #fffdf2; border-bottom: 1px solid #e2e6ea;
+                  padding: 12px 14px; display: none; max-height: 70vh;
+                  overflow-y: auto; }
+  .upload-panel.open { display: block; }
+  .upload-panel h4 { margin: 0 0 8px 0; font-size: 13px; color: #c8102e; }
+  .drop-zone { border: 2px dashed #c0c4cc; border-radius: 8px;
+               padding: 18px; text-align: center; cursor: pointer;
+               transition: all .2s; background: #fff; }
+  .drop-zone:hover, .drop-zone.dragover { border-color: #c8102e; background: #fff5f6; }
+  .drop-zone input[type=file] { display: none; }
+  .drop-zone-text { color: #666; font-size: 12px; }
+
+  /* Stage 1: review */
+  .review-panel { margin-top: 10px; display: none; }
+  .review-panel.show { display: block; }
+  .stats-bar { background: #fff; border: 1px solid #e2e6ea; border-radius: 4px;
+               padding: 8px 10px; font-size: 12px; margin-bottom: 8px; }
+  .stats-bar b { color: #c8102e; }
+
+  /* GPS-missing list */
+  .missing-gps-list { background: #fff3cd; border: 1px solid #ffeeba;
+                      border-radius: 4px; padding: 8px; margin-bottom: 8px; }
+  .missing-gps-list h5 { margin: 0 0 6px 0; font-size: 12px; color: #856404; }
+  .missing-row { display: flex; align-items: center; gap: 6px; padding: 4px 0;
+                 border-bottom: 1px solid #ffeeba; }
+  .missing-row:last-child { border-bottom: none; }
+  .missing-row img { width: 36px; height: 36px; object-fit: cover; border-radius: 3px; }
+  .missing-row .fname { flex: 0 0 110px; font-size: 11px; color: #555;
+                        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .missing-row input { width: 80px; padding: 3px 5px; border: 1px solid #d6dae0;
+                       border-radius: 3px; font-size: 11px; }
+  .missing-row input.invalid { border-color: #c00; background: #ffe6e6; }
+
+  /* Thumbnail grid */
+  .thumb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+                gap: 4px; margin-bottom: 8px; }
+  .thumb-cell { position: relative; aspect-ratio: 1; border: 1px solid #d6dae0;
+                border-radius: 3px; overflow: hidden; background: #fff; }
+  .thumb-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb-cell .remove-btn { position: absolute; top: 1px; right: 1px;
+                             width: 16px; height: 16px; border-radius: 50%;
+                             background: rgba(0,0,0,0.6); color: #fff; border: none;
+                             cursor: pointer; font-size: 10px; line-height: 14px;
+                             padding: 0; }
+  .thumb-cell .remove-btn:hover { background: #c00; }
+  .thumb-cell .gps-dot { position: absolute; bottom: 2px; left: 2px;
+                          width: 8px; height: 8px; border-radius: 50%; }
+  .thumb-cell .gps-dot.found { background: #0a7c0a; }
+  .thumb-cell .gps-dot.missing { background: #d97706; }
+
+  /* Actions */
+  .upload-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .upload-actions button { flex: 1; padding: 7px 10px; border: none;
+                            border-radius: 6px; cursor: pointer; font-size: 12px;
+                            font-weight: 500; }
+  .btn-primary { background: #c8102e; color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #a00d24; }
+  .btn-secondary { background: #f0f2f5; color: #333; border: 1px solid #d6dae0; }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* Stage 2: batch progress */
+  .batch-progress { margin-top: 10px; display: none; }
+  .batch-progress.show { display: block; }
+  .progress-bar-wrap { background: #e2e6ea; border-radius: 10px; overflow: hidden;
+                       height: 10px; margin-bottom: 8px; }
+  .progress-bar { height: 100%; background: #c8102e; transition: width .3s;
+                   width: 0%; }
+  .progress-text { font-size: 12px; color: #555; margin-bottom: 8px; font-weight: 500; }
+  .batch-log { background: #f8f9fa; border: 1px solid #e2e6ea; border-radius: 4px;
+                padding: 6px 8px; font-family: monospace; font-size: 11px;
+                max-height: 200px; overflow-y: auto; }
+  .batch-log .row { padding: 2px 0; }
+  .batch-log .ok { color: #0a7c0a; }
+  .batch-log .err { color: #c00; }
+  .batch-log .pending { color: #888; }
+  .batch-log .running { color: #c8102e; font-weight: 500; }
+
+  /* Stage 3: summary */
+  .batch-summary { margin-top: 10px; display: none; padding: 10px;
+                    background: #d4edda; border: 1px solid #c3e6cb;
+                    border-radius: 4px; font-size: 12px; }
+  .batch-summary.show { display: block; }
+  .batch-summary.has-errors { background: #fff3cd; border-color: #ffeeba; }
+  .batch-summary h5 { margin: 0 0 6px 0; font-size: 13px; }
+
+  /* Messages area */
+  .messages { flex: 1; overflow-y: auto; padding: 12px 14px; }
+  .msg { margin-bottom: 10px; max-width: 88%; padding: 8px 12px;
+         border-radius: 12px; line-height: 1.4; font-size: 13px;
+         word-wrap: break-word; }
+  .msg.bot  { background: #fff; border: 1px solid #e2e6ea; }
+  .msg.user { background: #c8102e; color: #fff; margin-left: auto; text-align: right; }
+  .msg.sys  { background: #fff3cd; border: 1px solid #ffeeba; font-size: 12px; }
+
+  .pill-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px;
+              border-top: 1px solid #e2e6ea; background: #fff; }
+  .pill { padding: 6px 10px; border-radius: 16px; background: #f0f2f5;
+          border: 1px solid #d6dae0; cursor: pointer; font-size: 12px; }
+  .pill:hover { background: #c8102e; color: #fff; border-color: #c8102e; }
+  .pill.upload-pill { background: #c8102e; color: #fff; border-color: #c8102e;
+                      font-weight: 500; }
+  .pill.upload-pill.disabled { background: #ccc; border-color: #ccc; cursor: not-allowed; }
+  .pill.upload-pill:hover { background: #a00d24; }
+
+  .input-row { display: flex; padding: 10px 12px; border-top: 1px solid #e2e6ea;
+               background: #fff; gap: 8px; }
+  .input-row input { flex: 1; padding: 8px 12px; border: 1px solid #d6dae0;
+                     border-radius: 6px; font-size: 13px; outline: none; }
+  .input-row input:focus { border-color: #c8102e; }
+  .input-row button { padding: 8px 16px; background: #c8102e; color: #fff;
+                      border: none; border-radius: 6px; cursor: pointer;
+                      font-weight: 500; font-size: 13px; }
+
+  .result-card { background: #fff; border: 1px solid #e2e6ea; border-radius: 8px;
+                 padding: 10px 12px; margin-top: 6px; }
+  .result-card b { color: #c8102e; }
+  .result-card a { color: #0066cc; text-decoration: none; }
+  .thumb { display: block; max-width: 100%; max-height: 180px;
+           border-radius: 6px; margin-top: 8px; border: 1px solid #e2e6ea;
+           cursor: pointer; }
+  .thumb-loading { font-size: 11px; color: #888; font-style: italic;
+                   margin-top: 6px; }
+
+  .modal { display: none; position: fixed; top: 0; left: 0;
+           width: 100%; height: 100%; background: rgba(0,0,0,0.85);
+           z-index: 999; justify-content: center; align-items: center;
+           cursor: pointer; }
+  .modal.show { display: flex; }
+  .modal img { max-width: 95%; max-height: 95%; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="chat">
+
+  <!-- Header with sign-in -->
+  <div class="header">
+    <div class="header-left">
+      🎨 Zudio Hoarding Analysis
+      <span>Ask, upload, analyse</span>
+    </div>
+    <button class="auth-btn" id="authBtn">Sign in</button>
+  </div>
+
+  <!-- Collapsible upload panel -->
+  <div class="upload-panel" id="uploadPanel">
+    <h4>📤 Upload photos for analysis</h4>
+    <label class="drop-zone" id="dropZone">
+      <input type="file" id="fileInput" accept="image/jpeg,image/png" multiple webkitdirectory directory>
+      <div class="drop-zone-text">
+        📷 Drop a folder or photos here, or click to choose<br>
+        <small>(JPEG/PNG · multiple files or whole folders supported · GPS in EXIF preferred)</small>
+      </div>
+    </label>
+    <div style="font-size:11px; color:#888; text-align:center; margin-top:4px;">
+      Folder picker not working? <a href="#" id="filesOnlyLink">Pick files instead</a>
+    </div>
+
+    <!-- Stage 1: Review selection -->
+    <div class="review-panel" id="reviewPanel">
+      <div class="stats-bar" id="statsBar"></div>
+      <div class="missing-gps-list" id="missingGpsList" style="display:none"></div>
+      <div class="thumb-grid" id="thumbGrid"></div>
+      <div class="upload-actions">
+        <button class="btn-secondary" id="cancelUpload">Cancel</button>
+        <button class="btn-primary" id="processBtn" disabled>Process photos →</button>
+      </div>
+    </div>
+
+    <!-- Stage 2: Batch progress -->
+    <div class="batch-progress" id="batchProgress">
+      <div class="progress-text" id="progressText">Processing…</div>
+      <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar"></div></div>
+      <div class="batch-log" id="batchLog"></div>
+    </div>
+
+    <!-- Stage 3: Summary -->
+    <div class="batch-summary" id="batchSummary"></div>
+  </div>
+
+  <!-- Chat messages -->
+  <div class="messages" id="messages">
+    <div class="msg bot">
+      Hi! I can help you find specific hoardings in the dataset.
+      Try a quick filter below, or sign in (top right) to upload new photos.
+    </div>
+  </div>
+
+  <!-- Filter pills + upload pill -->
+  <div class="pill-row">
+    <div class="pill upload-pill disabled" id="uploadPill">📤 Upload photo</div>
+    <div class="pill" data-q="obstructed">🚧 Obstructed</div>
+    <div class="pill" data-q="low">📉 Low dominance</div>
+    <div class="pill" data-q="high">📈 High dominance</div>
+    <div class="pill" data-q="competitor">⚔️ Competitors</div>
+    <div class="pill" data-q="ap_majority">✓ AP leads</div>
+    <div class="pill" data-q="all">🗺️ Show all</div>
+  </div>
+
+  <div class="input-row">
+    <input id="userInput" type="text" placeholder="Ask a question…" autocomplete="off">
+    <button id="sendBtn">Send</button>
+  </div>
+</div>
+
+<div class="modal" id="imgModal" onclick="this.classList.remove('show')">
+  <img id="modalImg" src="" alt="">
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════════
+   CONFIG — fill these in
+   ══════════════════════════════════════════════════════════════════════════ */
+const FEATURE_LAYER_URL =
+  "https://services.arcgis.com/sO7sDAs7L98eYVX4/arcgis/rest/services/AP_Hoarding_Analysis/FeatureServer/0";
+
+const OAUTH_CLIENT_ID = "YJih6cL9vMIZVop8";
+const OAUTH_PORTAL_URL = "https://www.arcgis.com";   // change if you use Enterprise
+
+// Cloudflare Worker proxy URL (fronts aiutils.arcgis.com to bypass browser CORS)
+const ANALYZE_PROXY_URL = "https://ap-analyze-proxy.saranyasingh10.workers.dev";
+/* ════════════════════════════════════════════════════════════════════════════ */
+
+/* ─── State ─── */
+let authToken    = null;
+let username     = null;
+let pendingItems = [];   // [{ file, exifLat, exifLon, manualLat, manualLon, hasGPS, thumbUrl, id }]
+
+/* ═══ DOM refs ═══ */
+const authBtn        = document.getElementById("authBtn");
+const uploadPanel    = document.getElementById("uploadPanel");
+const uploadPill     = document.getElementById("uploadPill");
+const dropZone       = document.getElementById("dropZone");
+const fileInput      = document.getElementById("fileInput");
+const filesOnlyLink  = document.getElementById("filesOnlyLink");
+const reviewPanel    = document.getElementById("reviewPanel");
+const statsBar       = document.getElementById("statsBar");
+const missingGpsList = document.getElementById("missingGpsList");
+const thumbGrid      = document.getElementById("thumbGrid");
+const processBtn     = document.getElementById("processBtn");
+const cancelUpload   = document.getElementById("cancelUpload");
+const batchProgress  = document.getElementById("batchProgress");
+const progressBar    = document.getElementById("progressBar");
+const progressText   = document.getElementById("progressText");
+const batchLog       = document.getElementById("batchLog");
+const batchSummary   = document.getElementById("batchSummary");
+const messagesEl     = document.getElementById("messages");
+const inputEl        = document.getElementById("userInput");
+const sendBtn        = document.getElementById("sendBtn");
+const modalEl        = document.getElementById("imgModal");
+const modalImg       = document.getElementById("modalImg");
+
+/* ════════════════════════════════════════════════════════════════════════════
+   OAuth — implicit flow with popup
+   ══════════════════════════════════════════════════════════════════════════ */
+function startOAuth() {
+  const redirectUri = window.location.origin + window.location.pathname;
+  const authUrl = `${OAUTH_PORTAL_URL}/sharing/rest/oauth2/authorize?` +
+    new URLSearchParams({
+      client_id:    OAUTH_CLIENT_ID,
+      response_type:"token",
+      expiration:   20160,                // ~14 days in minutes
+      redirect_uri: redirectUri
+    });
+
+  const popup = window.open(authUrl, "agol_oauth",
+    "width=560,height=720,scrollbars=yes");
+
+  // Poll the popup for the token in its URL hash
+  const interval = setInterval(() => {
+    if (!popup || popup.closed) { clearInterval(interval); return; }
+    try {
+      const url = popup.location.href;
+      if (url && url.includes("access_token=")) {
+        const hash = popup.location.hash.substring(1);
+        const params = new URLSearchParams(hash);
+        authToken = params.get("access_token");
+        username  = params.get("username");
+        clearInterval(interval);
+        popup.close();
+        onSignedIn();
+      }
+    } catch (e) { /* cross-origin — keep polling */ }
+  }, 400);
+}
+
+function onSignedIn() {
+  authBtn.textContent = `✓ ${username || "Signed in"}`;
+  authBtn.classList.add("signed-in");
+  uploadPill.classList.remove("disabled");
+  addMsg(`✅ Signed in as <b>${username}</b>. You can now upload photos.`,
+         "bot", true);
+}
+
+function signOut() {
+  authToken = null; username = null;
+  authBtn.textContent = "Sign in";
+  authBtn.classList.remove("signed-in");
+  uploadPill.classList.add("disabled");
+  uploadPanel.classList.remove("open");
+}
+
+authBtn.addEventListener("click", () => {
+  if (authToken) signOut();
+  else           startOAuth();
+});
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Upload UI
+   ══════════════════════════════════════════════════════════════════════════ */
+uploadPill.addEventListener("click", () => {
+  if (uploadPill.classList.contains("disabled")) {
+    addMsg("Please sign in first (top-right button).", "bot");
+    return;
+  }
+  uploadPanel.classList.toggle("open");
+});
+
+/* drag/drop */
+["dragenter","dragover"].forEach(ev =>
+  dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add("dragover"); })
+);
+["dragleave","drop"].forEach(ev =>
+  dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.remove("dragover"); })
+);
+dropZone.addEventListener("drop", e => {
+  const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith("image/"));
+  if (files.length) handleFiles(files);
+});
+fileInput.addEventListener("change", e => {
+  const files = Array.from(e.target.files).filter(f => f.type.startsWith("image/"));
+  if (files.length) handleFiles(files);
+});
+
+// Toggle file picker mode between folder & multi-file
+filesOnlyLink.addEventListener("click", (e) => {
+  e.preventDefault();
+  if (fileInput.hasAttribute("webkitdirectory")) {
+    fileInput.removeAttribute("webkitdirectory");
+    fileInput.removeAttribute("directory");
+    filesOnlyLink.textContent = "Pick folder instead";
+  } else {
+    fileInput.setAttribute("webkitdirectory", "");
+    fileInput.setAttribute("directory", "");
+    filesOnlyLink.textContent = "Pick files instead";
+  }
+  fileInput.value = "";
+  setTimeout(() => fileInput.click(), 50);
+});
+
+async function handleFiles(files) {
+  // Read EXIF for each file in parallel
+  pendingItems = await Promise.all(files.map(async (file, idx) => {
+    const item = {
+      id: `item_${Date.now()}_${idx}`,
+      file: file,
+      exifLat: null, exifLon: null,
+      manualLat: "", manualLon: "",
+      hasGPS: false,
+      thumbUrl: URL.createObjectURL(file)
+    };
+    try {
+      const exif = await exifr.gps(file);
+      if (exif && exif.latitude && exif.longitude) {
+        item.exifLat = exif.latitude;
+        item.exifLon = exif.longitude;
+        item.hasGPS  = true;
+      }
+    } catch {}
+    return item;
+  }));
+
+  renderReview();
+}
+
+function renderReview() {
+  if (pendingItems.length === 0) {
+    reviewPanel.classList.remove("show");
+    return;
+  }
+  reviewPanel.classList.add("show");
+  batchProgress.classList.remove("show");
+  batchSummary.classList.remove("show");
+
+  const withGPS    = pendingItems.filter(p => p.hasGPS).length;
+  const missingGPS = pendingItems.length - withGPS;
+
+  // Stats bar
+  statsBar.innerHTML =
+    `<b>${pendingItems.length}</b> file(s) selected · ` +
+    `<span style="color:#0a7c0a">${withGPS} with GPS</span> · ` +
+    (missingGPS > 0
+      ? `<span style="color:#d97706">${missingGPS} missing GPS</span>`
+      : `<span>all geotagged ✓</span>`);
+
+  // Missing GPS rows
+  const missingItems = pendingItems.filter(p => !p.hasGPS);
+  if (missingItems.length > 0) {
+    missingGpsList.style.display = "block";
+    missingGpsList.innerHTML =
+      `<h5>⚠️ ${missingItems.length} photo(s) need manual lat/lon:</h5>` +
+      missingItems.map(item => `
+        <div class="missing-row" data-id="${item.id}">
+          <img src="${item.thumbUrl}" alt="">
+          <span class="fname" title="${item.file.name}">${item.file.name}</span>
+          <input type="number" step="0.0000001" placeholder="Lat" data-axis="lat"
+                 value="${item.manualLat}">
+          <input type="number" step="0.0000001" placeholder="Lon" data-axis="lon"
+                 value="${item.manualLon}">
+        </div>
+      `).join("");
+
+    // Wire up the inputs to update state
+    missingGpsList.querySelectorAll("input").forEach(inp => {
+      inp.addEventListener("input", (e) => {
+        const row  = e.target.closest(".missing-row");
+        const id   = row.dataset.id;
+        const axis = e.target.dataset.axis;
+        const item = pendingItems.find(p => p.id === id);
+        if (!item) return;
+        if (axis === "lat") item.manualLat = e.target.value;
+        else                item.manualLon = e.target.value;
+
+        // Visual validation
+        const v = parseFloat(e.target.value);
+        const valid = !isNaN(v) &&
+                      (axis === "lat" ? (v >= -90 && v <= 90) : (v >= -180 && v <= 180));
+        e.target.classList.toggle("invalid", e.target.value !== "" && !valid);
+
+        updateProcessBtn();
+      });
+    });
+  } else {
+    missingGpsList.style.display = "none";
+  }
+
+  // Thumbnail grid
+  thumbGrid.innerHTML = pendingItems.map(item => `
+    <div class="thumb-cell" data-id="${item.id}">
+      <img src="${item.thumbUrl}" alt="">
+      <button class="remove-btn" title="Remove">×</button>
+      <div class="gps-dot ${item.hasGPS ? 'found' : 'missing'}"
+           title="${item.hasGPS ? 'GPS found' : 'GPS missing'}"></div>
+    </div>
+  `).join("");
+
+  // Wire remove buttons
+  thumbGrid.querySelectorAll(".remove-btn").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      const id = e.target.closest(".thumb-cell").dataset.id;
+      pendingItems = pendingItems.filter(p => p.id !== id);
+      renderReview();
+    });
+  });
+
+  updateProcessBtn();
+}
+
+function getEffectiveCoords(item) {
+  if (item.hasGPS) return { lat: item.exifLat, lon: item.exifLon };
+  const lat = parseFloat(item.manualLat);
+  const lon = parseFloat(item.manualLon);
+  if (isNaN(lat) || isNaN(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return { lat, lon };
+}
+
+function updateProcessBtn() {
+  const allValid = pendingItems.length > 0 &&
+                   pendingItems.every(item => getEffectiveCoords(item) !== null);
+  processBtn.disabled = !allValid;
+  processBtn.textContent = `Process ${pendingItems.length} photo${pendingItems.length === 1 ? "" : "s"} →`;
+}
+
+cancelUpload.addEventListener("click", () => {
+  pendingItems.forEach(p => URL.revokeObjectURL(p.thumbUrl));
+  pendingItems = [];
+  reviewPanel.classList.remove("show");
+  batchProgress.classList.remove("show");
+  batchSummary.classList.remove("show");
+  fileInput.value = "";
+});
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Batch pipeline — sequential, with progress
+   ══════════════════════════════════════════════════════════════════════════ */
+processBtn.addEventListener("click", runBatch);
+
+async function runBatch() {
+  reviewPanel.classList.remove("show");
+  batchProgress.classList.add("show");
+  batchSummary.classList.remove("show");
+
+  // Snapshot items so users can't modify mid-run
+  const queue = pendingItems.slice();
+  const results = [];
+
+  // Init log entries
+  batchLog.innerHTML = queue.map((item, i) =>
+    `<div class="row pending" data-id="${item.id}">
+       ⏸ ${i+1}/${queue.length} · ${item.file.name} — waiting
+     </div>`
+  ).join("");
+
+  const setRow = (id, html, cls) => {
+    const row = batchLog.querySelector(`[data-id="${id}"]`);
+    if (row) {
+      row.innerHTML = html;
+      row.className = `row ${cls}`;
+    }
+  };
+
+  let done = 0;
+  for (const item of queue) {
+    const coords = getEffectiveCoords(item);
+    const title = `upload_${Date.now()}_${item.id.split("_").pop()}`;
+
+    progressText.textContent =
+      `Processing ${done + 1}/${queue.length} — ${item.file.name}`;
+    setRow(item.id, `🔄 ${done + 1}/${queue.length} · ${item.file.name} — uploading…`, "running");
+
+    try {
+      // 1 — upload
+      const itemId = await uploadAsImageItem(item.file, title);
+      setRow(item.id, `🔄 ${done + 1}/${queue.length} · ${item.file.name} — sharing…`, "running");
+
+      // 2 — share
+      await shareItemPublic(itemId);
+      setRow(item.id, `🔄 ${done + 1}/${queue.length} · ${item.file.name} — analysing…`, "running");
+
+      // 3 — analyse
+      const aiResult = await analyzeImage(itemId);
+      const dom = aiResult.overall.asian_paints_dominance_rating;
+      setRow(item.id, `🔄 ${done + 1}/${queue.length} · ${item.file.name} — saving…`, "running");
+
+      // 4 — add feature
+      const newOid = await addFeature(title, coords.lat, coords.lon, aiResult);
+
+      // 5 — attach
+      await attachImage(newOid, item.file);
+
+      setRow(item.id,
+        `✅ ${done + 1}/${queue.length} · ${item.file.name} — AP dominance ${dom}/10`,
+        "ok"
+      );
+      results.push({ ok: true, item, aiResult, title });
+
+    } catch (err) {
+      console.error(`Failed for ${item.file.name}:`, err);
+      setRow(item.id,
+        `❌ ${done + 1}/${queue.length} · ${item.file.name} — ${(err.message || err).substring(0, 80)}`,
+        "err"
+      );
+      results.push({ ok: false, item, error: err.message || String(err) });
+    }
+
+    done++;
+    progressBar.style.width = `${(done / queue.length) * 100}%`;
+  }
+
+  // ── Summary ─────────────────────────────────────────────────────────────
+  progressText.textContent = `Done — ${done}/${queue.length} processed`;
+
+  const ok    = results.filter(r => r.ok);
+  const fail  = results.filter(r => !r.ok);
+  const avgDom = ok.length
+    ? (ok.reduce((s, r) => s + (r.aiResult.overall.asian_paints_dominance_rating || 0), 0) / ok.length).toFixed(1)
+    : "N/A";
+  const totalAP   = ok.reduce((s, r) => s + (r.aiResult.overall.asian_paints_hoarding_count || 0), 0);
+  const totalComp = ok.reduce((s, r) => s + (r.aiResult.overall.competitor_hoarding_count   || 0), 0);
+
+  batchSummary.classList.add("show");
+  batchSummary.classList.toggle("has-errors", fail.length > 0);
+  batchSummary.innerHTML = `
+    <h5>${fail.length === 0 ? "✅" : "⚠️"} Batch complete</h5>
+    <div><b>${ok.length}</b> succeeded · <b>${fail.length}</b> failed</div>
+    ${ok.length > 0 ? `
+      <div style="margin-top:6px">
+        Average AP dominance: <b>${avgDom}/10</b><br>
+        Total AP hoardings detected: <b>${totalAP}</b><br>
+        Total competitor hoardings: <b>${totalComp}</b>
+      </div>` : ""}
+    ${fail.length > 0 ? `
+      <div style="margin-top:8px; color:#856404">
+        <b>Failed files:</b>
+        <ul style="margin:4px 0; padding-left:18px; font-size:11px">
+          ${fail.map(r => `<li>${r.item.file.name}: ${r.error}</li>`).join("")}
+        </ul>
+      </div>` : ""}
+    <div style="margin-top:8px">
+      <button class="btn-primary" style="padding:5px 12px" id="closeBatchBtn">Close</button>
+    </div>`;
+
+  document.getElementById("closeBatchBtn").addEventListener("click", () => {
+    pendingItems.forEach(p => URL.revokeObjectURL(p.thumbUrl));
+    pendingItems = [];
+    batchProgress.classList.remove("show");
+    batchSummary.classList.remove("show");
+    uploadPanel.classList.remove("open");
+    fileInput.value = "";
+  });
+
+  // Bot message in chat
+  if (ok.length > 0) {
+    addMsg(`✅ Added ${ok.length} new location(s) to the layer. ` +
+           `Click "Show all" to see them on the map.`, "bot");
+  }
+  if (fail.length > 0) {
+    addMsg(`⚠️ ${fail.length} upload(s) failed — see batch summary for details.`,
+           "bot");
+  }
+}
+
+/* ── Step 1: Upload image as AGOL Image item ─────────────────────────────── */
+async function uploadAsImageItem(file, title) {
+  const url = `${OAUTH_PORTAL_URL}/sharing/rest/content/users/${username}/addItem`;
+
+  // Give the file a unique filename so AGOL doesn't reject as duplicate
+  const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+  const uniqueName = `${title}.${ext}`;
+  const uniqueFile = new File([file], uniqueName, { type: file.type });
+
+  const fd = new FormData();
+  fd.append("f", "json");
+  fd.append("token", authToken);
+  fd.append("title", title);
+  fd.append("type", "Image");
+  fd.append("tags", "asian-paints,hoarding,upload");
+  fd.append("file", uniqueFile, uniqueName);
+
+  const r = await fetch(url, { method: "POST", body: fd });
+  const data = await r.json();
+  if (!data.success) throw new Error("Upload failed: " + JSON.stringify(data));
+  return data.id;
+}
+
+/* ── Step 2: Share item publicly ─────────────────────────────────────────── */
+async function shareItemPublic(itemId) {
+  const url = `${OAUTH_PORTAL_URL}/sharing/rest/content/users/${username}/items/${itemId}/share`;
+  const fd = new FormData();
+  fd.append("f", "json");
+  fd.append("token", authToken);
+  fd.append("everyone", "true");
+
+  const r = await fetch(url, { method: "POST", body: fd });
+  const data = await r.json();
+  if (data.error) throw new Error("Share failed: " + data.error.message);
+  return data;
+}
+
+/* ── Step 3: Call arcgis.ai analyze_image REST endpoint ──────────────────── */
+const ANALYSIS_PROMPT = `
+You are a brand visibility analyst for Asian Paints.
+Examine this street-level photo of a paint store and identify EVERY paint brand
+hoarding/sign visible (Asian Paints, Berger, Nerolac/Kansai, Dulux,
+Birla Opus, JSW Paints, Nippon, Indigo, etc.).
+
+For each hoarding return:
+- brand
+- is_asian_paints (true/false)
+- size_category (Small <10%, Medium 10-25%, Large 25-50%, Dominant >50%)
+- visibility_score (1-10)
+- position_in_frame
+- obstructions (Yes/No/Partial)
+
+Then give overall:
+- asian_paints_dominance_rating (1-10)
+- asian_paints_hoarding_count, competitor_hoarding_count
+- strengths, threats, recommendations (lists)
+
+Respond ONLY as valid JSON, no markdown fences:
+{
+  "hoardings": [{"brand":"","is_asian_paints":false,"size_category":"",
+                 "visibility_score":0,"position_in_frame":"","obstructions":""}],
+  "overall": {"asian_paints_dominance_rating":0,
+              "asian_paints_hoarding_count":0,"competitor_hoarding_count":0,
+              "strengths":[],"threats":[],"recommendations":[]}
+}
+`;
+
+async function analyzeImage(itemId) {
+  if (ANALYZE_PROXY_URL.startsWith("PASTE")) {
+    throw new Error("ANALYZE_PROXY_URL not configured. Deploy cloudflare_worker.js " +
+                    "and paste its URL into the CONFIG block at the top of this file.");
+  }
+
+  const imageUrl = `${OAUTH_PORTAL_URL}/sharing/rest/content/items/${itemId}/data`;
+
+  // POST to our Cloudflare Worker, which forwards to aiutils.arcgis.com
+  // using the exact body format the API expects (input + data array + inputCulture)
+  // and the correct X-Esri-Authorization header.
+  const r = await fetch(ANALYZE_PROXY_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      image:  imageUrl,
+      prompt: ANALYSIS_PROMPT,
+      token:  authToken
+    })
+  });
+  const data = await r.json();
+  if (!data.success) throw new Error("Analysis failed: " + JSON.stringify(data));
+
+  // Response shape (confirmed via SDK trace):
+  //   data.results[0].value  →  the LLM's raw text reply (string)
+  // We instructed the LLM to return JSON, so parse it now.
+  let value = data.results[0].value;
+  if (typeof value === "string") {
+    // Strip any accidental markdown fences just in case
+    value = value.replace(/```json|```/g, "").trim();
+    try {
+      value = JSON.parse(value);
+    } catch (e) {
+      throw new Error("AI did not return valid JSON. Raw response: " + value.substring(0, 200));
+    }
+  }
+  return value;
+}
+
+/* ── Step 4: Add feature row to the layer ────────────────────────────────── */
+async function addFeature(title, lat, lon, aiResult) {
+  const overall   = aiResult.overall;
+  const hoardings = aiResult.hoardings || [];
+  const obstructed = hoardings.filter(h =>
+    h.obstructions === "Yes" || h.obstructions === "Partial").length;
+  const competitor = hoardings.filter(h => !h.is_asian_paints).map(h => h.brand);
+  const topComp = competitor.length
+    ? competitor.sort((a,b) =>
+        competitor.filter(v => v===a).length - competitor.filter(v => v===b).length
+      ).pop() : "";
+  const apVis = hoardings.filter(h => h.is_asian_paints).map(h => h.visibility_score);
+  const avgApVis = apVis.length ? apVis.reduce((s,v)=>s+v,0) / apVis.length : 0;
+  const dom = overall.asian_paints_dominance_rating || 0;
+  const band = dom <= 3 ? "Low" : dom >= 7 ? "High" : "Medium";
+
+  const feature = {
+    geometry: { x: lon, y: lat, spatialReference: { wkid: 4326 } },
+    attributes: {
+      title:               title,
+      lat:                 lat,
+      lon:                 lon,
+      ap_dominance:        dom,
+      ap_hoarding_count:   overall.asian_paints_hoarding_count || 0,
+      comp_hoarding_count: overall.competitor_hoarding_count   || 0,
+      total_hoardings:     hoardings.length,
+      obstructed_count:    obstructed,
+      has_obstructions:    obstructed > 0 ? 1 : 0,
+      top_competitor:      topComp,
+      avg_ap_visibility:   Math.round(avgApVis * 10) / 10,
+      dominance_band:      band,
+      brands_json:         JSON.stringify(hoardings.map(h => h.brand)),
+      hoardings_json:      JSON.stringify(hoardings),
+      strengths:           (overall.strengths       || []).join(" | "),
+      threats:             (overall.threats         || []).join(" | "),
+      recommendations:     (overall.recommendations || []).join(" | "),
+    }
+  };
+
+  const url = `${FEATURE_LAYER_URL}/addFeatures`;
+  const fd = new FormData();
+  fd.append("f", "json");
+  fd.append("token", authToken);
+  fd.append("features", JSON.stringify([feature]));
+
+  const r = await fetch(url, { method: "POST", body: fd });
+  const data = await r.json();
+  const result = (data.addResults || [])[0];
+  if (!result || !result.success) {
+    throw new Error("Feature add failed: " + JSON.stringify(data));
+  }
+  return result.objectId;
+}
+
+/* ── Step 5: Attach image to the new feature ─────────────────────────────── */
+async function attachImage(oid, file) {
+  const url = `${FEATURE_LAYER_URL}/${oid}/addAttachment`;
+  const fd = new FormData();
+  fd.append("f", "json");
+  fd.append("token", authToken);
+  fd.append("attachment", file, file.name);
+
+  const r = await fetch(url, { method: "POST", body: fd });
+  const data = await r.json();
+  if (!data.addAttachmentResult || !data.addAttachmentResult.success) {
+    throw new Error("Attach failed: " + JSON.stringify(data));
+  }
+  return data.addAttachmentResult.objectId;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Existing chat / filter functionality
+   ══════════════════════════════════════════════════════════════════════════ */
+function addMsg(text, who="bot", html=false) {
+  const div = document.createElement("div");
+  div.className = `msg ${who}`;
+  if (html) div.innerHTML = text;
+  else      div.textContent = text;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+
+const QUICK_QUERIES = {
+  obstructed:  { label: "Hoardings with obstructions",          where: "has_obstructions = 1" },
+  low:         { label: "Stores where AP has LOW dominance (≤3)", where: "ap_dominance <= 3" },
+  high:        { label: "Stores where AP DOMINATES (≥7)",       where: "ap_dominance >= 7" },
+  competitor:  { label: "Stores with competitor presence",      where: "comp_hoarding_count > 0" },
+  ap_majority: { label: "Stores where AP outnumbers competitors", where: "ap_hoarding_count > comp_hoarding_count" },
+  all:         { label: "All analysed locations",                where: "1=1" }
+};
+
+function parseFreeText(text) {
+  const t = text.toLowerCase();
+  if (/(low|weak|poor|bad).{0,15}(dominance|presence|visibility)/.test(t) ||
+      /asian paints (is )?(losing|weak|absent)/.test(t)) return QUICK_QUERIES.low;
+  if (/(high|strong|good|dominat).{0,15}(dominance|presence|visibility)/.test(t) ||
+      /asian paints (is )?(winning|dominating|leading)/.test(t)) return QUICK_QUERIES.high;
+  if (/(obstruct|block|hide|cover)/.test(t)) return QUICK_QUERIES.obstructed;
+  const brandMatch = t.match(/(berger|nerolac|kansai|dulux|birla opus|birla|jsw|nippon|indigo)/);
+  if (brandMatch) {
+    const brand = brandMatch[1];
+    return {
+      label: `Stores where ${brand} appears`,
+      where: `LOWER(brands_json) LIKE '%${brand.replace("'","''")}%'`
+    };
+  }
+  if (/competitor|other brand|rival/.test(t)) return QUICK_QUERIES.competitor;
+  const cityMatch = t.match(/(mumbai|pune)/);
+  if (cityMatch) {
+    if (cityMatch[1] === "pune") return { label: "Pune locations",   where: "lat < 19.0" };
+    if (cityMatch[1] === "mumbai") return { label: "Mumbai locations", where: "lat >= 19.0" };
+  }
+  if (/^(show all|all|everything|reset)/.test(t)) return QUICK_QUERIES.all;
+  return null;
+}
+
+async function queryLayer(whereClause) {
+  if (FEATURE_LAYER_URL.startsWith("PASTE")) return { error: "Feature layer URL not configured" };
+  const url = `${FEATURE_LAYER_URL}/query?` + new URLSearchParams({
+    where: whereClause,
+    outFields: "OBJECTID,title,ap_dominance,ap_hoarding_count,comp_hoarding_count," +
+               "obstructed_count,top_competitor,dominance_band,lat,lon," +
+               "strengths,threats,recommendations",
+    returnGeometry: "false",
+    f: "json"
+  });
+  try {
+    const r = await fetch(url);
+    return await r.json();
+  } catch (e) { return { error: e.message }; }
+}
+
+async function fetchAttachmentUrl(objectId) {
+  try {
+    const r = await fetch(`${FEATURE_LAYER_URL}/${objectId}/attachments?f=json`);
+    const data = await r.json();
+    if (data.attachmentInfos && data.attachmentInfos.length > 0) {
+      return `${FEATURE_LAYER_URL}/${objectId}/attachments/${data.attachmentInfos[0].id}`;
+    }
+  } catch (e) { console.error(e); }
+  return null;
+}
+
+async function loadThumbnail(card, objectId) {
+  const placeholder = card.querySelector(".thumb-loading");
+  const attUrl = await fetchAttachmentUrl(objectId);
+  if (!attUrl) {
+    if (placeholder) placeholder.textContent = "(no image attached)";
+    return;
+  }
+  const img = document.createElement("img");
+  img.className = "thumb";
+  img.src = attUrl;
+  img.onclick = () => { modalImg.src = attUrl; modalEl.classList.add("show"); };
+  if (placeholder) placeholder.replaceWith(img);
+}
+
+function renderResults(features, label) {
+  if (!features || features.length === 0) {
+    addMsg(`No locations match: <i>${label}</i>`, "bot", true);
+    return;
+  }
+  addMsg(`<b>${features.length} location(s) match:</b> <i>${label}</i>`, "bot", true);
+  features.forEach(f => {
+    const a = f.attributes;
+    const c = a.ap_dominance >= 7 ? "#0a7c0a" : a.ap_dominance <= 3 ? "#c00" : "#d97706";
+    const html = `
+      <div class="result-card" data-oid="${a.OBJECTID}">
+        <b>📷 ${a.title}</b>
+        &nbsp;<span style="color:${c}">Dominance ${a.ap_dominance}/10</span><br>
+        <small>AP: ${a.ap_hoarding_count} &nbsp;|&nbsp;
+               Competitor: ${a.comp_hoarding_count}
+               ${a.obstructed_count > 0 ? `&nbsp;|&nbsp; 🚧 ${a.obstructed_count} obstructed` : ""}
+               ${a.top_competitor ? `&nbsp;|&nbsp; Top rival: <b>${a.top_competitor}</b>` : ""}
+        </small>
+        <div class="thumb-loading">Loading photo…</div>
+      </div>`;
+    const wrap = addMsg(html, "bot", true);
+    loadThumbnail(wrap.querySelector(".result-card"), a.OBJECTID);
+  });
+}
+
+async function handleQuery(query) {
+  let q = null;
+  if (typeof query === "string" && QUICK_QUERIES[query]) {
+    q = QUICK_QUERIES[query];
+    addMsg(q.label, "user");
+  } else {
+    addMsg(query, "user");
+    q = parseFreeText(query);
+    if (!q) {
+      addMsg("Didn't catch that. Try a quick filter, or e.g. <i>'Pune'</i>, " +
+             "<i>'Birla Opus'</i>, <i>'obstructed'</i>.", "bot", true);
+      return;
+    }
+  }
+  addMsg(`🔍 ${q.label}…`, "sys");
+  const result = await queryLayer(q.where);
+  if (result.error) {
+    const m = typeof result.error === "string" ? result.error : (result.error.message || JSON.stringify(result.error));
+    addMsg(`❌ ${m}`, "bot"); return;
+  }
+  renderResults(result.features || [], q.label);
+}
+
+document.querySelectorAll(".pill[data-q]").forEach(p =>
+  p.addEventListener("click", () => handleQuery(p.dataset.q))
+);
+sendBtn.addEventListener("click", () => {
+  const txt = inputEl.value.trim();
+  if (!txt) return;
+  inputEl.value = "";
+  handleQuery(txt);
+});
+inputEl.addEventListener("keydown", e => { if (e.key === "Enter") sendBtn.click(); });
+</script>
+</body>
+</html>
