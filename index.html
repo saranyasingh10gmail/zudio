@@ -864,14 +864,16 @@ function parseFreeText(text) {
 
 async function queryLayer(whereClause) {
   if (FEATURE_LAYER_URL.startsWith("PASTE")) return { error: "Feature layer URL not configured" };
-  const url = `${FEATURE_LAYER_URL}/query?` + new URLSearchParams({
+  const params = {
     where: whereClause,
     outFields: "OBJECTID,title,ap_dominance,ap_hoarding_count,comp_hoarding_count," +
                "obstructed_count,top_competitor,dominance_band,lat,lon," +
                "strengths,threats,recommendations",
     returnGeometry: "false",
     f: "json"
-  });
+  };
+  if (authToken) params.token = authToken;
+  const url = `${FEATURE_LAYER_URL}/query?` + new URLSearchParams(params);
   try {
     const r = await fetch(url);
     return await r.json();
@@ -880,10 +882,12 @@ async function queryLayer(whereClause) {
 
 async function fetchAttachmentUrl(objectId) {
   try {
-    const r = await fetch(`${FEATURE_LAYER_URL}/${objectId}/attachments?f=json`);
+    const tokenParam = authToken ? `&token=${encodeURIComponent(authToken)}` : "";
+    const r = await fetch(`${FEATURE_LAYER_URL}/${objectId}/attachments?f=json${tokenParam}`);
     const data = await r.json();
     if (data.attachmentInfos && data.attachmentInfos.length > 0) {
-      return `${FEATURE_LAYER_URL}/${objectId}/attachments/${data.attachmentInfos[0].id}`;
+      const base = `${FEATURE_LAYER_URL}/${objectId}/attachments/${data.attachmentInfos[0].id}`;
+      return authToken ? `${base}?token=${encodeURIComponent(authToken)}` : base;
     }
   } catch (e) { console.error(e); }
   return null;
