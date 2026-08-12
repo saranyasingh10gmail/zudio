@@ -753,7 +753,7 @@ async function addFeature(title, lat, lon, aiResult) {
   const overall   = aiResult.overall;
   const hoardings = aiResult.hoardings || [];
   const obstructed = hoardings.filter(h =>
-    h.obstructions === "Yes" || h.obstructions === "Partial").length;
+    h.is_asian_paints && (h.obstructions === "Yes" || h.obstructions === "Partial")).length;
   const competitor = hoardings.filter(h => !h.is_asian_paints).map(h => h.brand);
   const topComp = competitor.length
     ? competitor.sort((a,b) =>
@@ -832,7 +832,7 @@ function addMsg(text, who="bot", html=false) {
 }
 
 const QUICK_QUERIES = {
-  obstructed:  { label: "Hoardings with obstructions",          where: "has_obstructions = 1" },
+  obstructed:  { label: "Zudio hoardings with obstructions",     where: "has_obstructions = 1" },
   low:         { label: "Stores where Zudio has LOW dominance (≤3)", where: "ap_dominance <= 3" },
   high:        { label: "Stores where Zudio DOMINATES (≥7)",       where: "ap_dominance >= 7" },
   competitor:  { label: "Stores with competitor presence",      where: "comp_hoarding_count > 0" },
