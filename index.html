@@ -680,8 +680,11 @@ async function shareItemPublic(itemId) {
 const ANALYSIS_PROMPT = `
 You are a brand visibility analyst for Zudio (Tata's value fashion retail brand).
 Examine this street-level photo and identify EVERY fashion/apparel retail store
-hoarding/sign visible (Zudio, Style Union, Reliance Trends, Max Fashion, V-Mart,
+hoarding/sign visible (Zudio, Trends, Style Union, Reliance Trends, Max Fashion, V-Mart,
 Style Bazaar, V2 Retail, Citykart, Best Price, Pantaloons, Westside, etc.).
+Note: "Trends" signage refers to Reliance Trends — treat it as a competitor.
+Only count hoardings for fashion/apparel retailers — ignore unrelated signage
+(cinemas, restaurants, electronics, etc.) even if visible in the frame.
 
 For each hoarding return:
 - brand
@@ -844,7 +847,7 @@ function parseFreeText(text) {
   if (/(high|strong|good|dominat).{0,15}(dominance|presence|visibility)/.test(t) ||
       /zudio (is )?(winning|dominating|leading)/.test(t)) return QUICK_QUERIES.high;
   if (/(obstruct|block|hide|cover)/.test(t)) return QUICK_QUERIES.obstructed;
-  const brandMatch = t.match(/(style union|reliance trends|max fashion|max|v-mart|vmart|style bazaar|v2 retail|citykart|city kart|best price|pantaloons|westside)/);
+  const brandMatch = t.match(/(style union|reliance trends|trends|max fashion|max|v-mart|vmart|style bazaar|v2 retail|citykart|city kart|best price|pantaloons|westside)/);
   if (brandMatch) {
     const brand = brandMatch[1];
     return {
