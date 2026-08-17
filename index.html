@@ -754,11 +754,14 @@ async function addFeature(title, lat, lon, aiResult) {
   const hoardings = aiResult.hoardings || [];
   const obstructed = hoardings.filter(h =>
     h.is_zudio && (h.obstructions === "Yes" || h.obstructions === "Partial")).length;
-  const competitor = hoardings.filter(h => !h.is_zudio).map(h => h.brand);
-  const topComp = competitor.length
-    ? competitor.sort((a,b) =>
-        competitor.filter(v => v===a).length - competitor.filter(v => v===b).length
-      ).pop() : "";
+  const competitorHoardings = hoardings.filter(h => !h.is_zudio);
+  const SIZE_RANK = { Dominant: 4, Large: 3, Medium: 2, Small: 1 };
+  const topComp = competitorHoardings.length
+    ? competitorHoardings.slice().sort((a, b) => {
+        const sizeDiff = (SIZE_RANK[b.size_category] || 0) - (SIZE_RANK[a.size_category] || 0);
+        return sizeDiff !== 0 ? sizeDiff : (b.visibility_score || 0) - (a.visibility_score || 0);
+      })[0].brand
+    : "";
   const apVis = hoardings.filter(h => h.is_zudio).map(h => h.visibility_score);
   const avgApVis = apVis.length ? apVis.reduce((s,v)=>s+v,0) / apVis.length : 0;
   const dom = overall.zudio_dominance_rating || 0;
