@@ -558,7 +558,7 @@ async function runBatch() {
 
       // 3 — analyse
       const aiResult = await analyzeImage(itemId);
-      const dom = aiResult.overall.asian_paints_dominance_rating;
+      const dom = aiResult.overall.zudio_dominance_rating;
       setRow(item.id, `🔄 ${done + 1}/${queue.length} · ${item.file.name} — saving…`, "running");
 
       // 4 — add feature
@@ -592,9 +592,9 @@ async function runBatch() {
   const ok    = results.filter(r => r.ok);
   const fail  = results.filter(r => !r.ok);
   const avgDom = ok.length
-    ? (ok.reduce((s, r) => s + (r.aiResult.overall.asian_paints_dominance_rating || 0), 0) / ok.length).toFixed(1)
+    ? (ok.reduce((s, r) => s + (r.aiResult.overall.zudio_dominance_rating || 0), 0) / ok.length).toFixed(1)
     : "N/A";
-  const totalAP   = ok.reduce((s, r) => s + (r.aiResult.overall.asian_paints_hoarding_count || 0), 0);
+  const totalAP   = ok.reduce((s, r) => s + (r.aiResult.overall.zudio_hoarding_count || 0), 0);
   const totalComp = ok.reduce((s, r) => s + (r.aiResult.overall.competitor_hoarding_count   || 0), 0);
 
   batchSummary.classList.add("show");
@@ -688,23 +688,23 @@ Only count hoardings for fashion/apparel retailers — ignore unrelated signage
 
 For each hoarding return:
 - brand
-- is_asian_paints (true/false)   // true if this hoarding is for ZUDIO, false otherwise
+- is_zudio (true/false)   // true if this hoarding is for ZUDIO, false otherwise
 - size_category (Small <10%, Medium 10-25%, Large 25-50%, Dominant >50%)
 - visibility_score (1-10)
 - position_in_frame
 - obstructions (Yes/No/Partial)
 
 Then give overall:
-- asian_paints_dominance_rating (1-10)   // Zudio's visual dominance rating
-- asian_paints_hoarding_count, competitor_hoarding_count
+- zudio_dominance_rating (1-10)   // Zudio's visual dominance rating
+- zudio_hoarding_count, competitor_hoarding_count
 - strengths, threats, recommendations (lists)
 
 Respond ONLY as valid JSON, no markdown fences:
 {
-  "hoardings": [{"brand":"","is_asian_paints":false,"size_category":"",
+  "hoardings": [{"brand":"","is_zudio":false,"size_category":"",
                  "visibility_score":0,"position_in_frame":"","obstructions":""}],
-  "overall": {"asian_paints_dominance_rating":0,
-              "asian_paints_hoarding_count":0,"competitor_hoarding_count":0,
+  "overall": {"zudio_dominance_rating":0,
+              "zudio_hoarding_count":0,"competitor_hoarding_count":0,
               "strengths":[],"threats":[],"recommendations":[]}
 }
 `;
@@ -753,15 +753,15 @@ async function addFeature(title, lat, lon, aiResult) {
   const overall   = aiResult.overall;
   const hoardings = aiResult.hoardings || [];
   const obstructed = hoardings.filter(h =>
-    h.is_asian_paints && (h.obstructions === "Yes" || h.obstructions === "Partial")).length;
-  const competitor = hoardings.filter(h => !h.is_asian_paints).map(h => h.brand);
+    h.is_zudio && (h.obstructions === "Yes" || h.obstructions === "Partial")).length;
+  const competitor = hoardings.filter(h => !h.is_zudio).map(h => h.brand);
   const topComp = competitor.length
     ? competitor.sort((a,b) =>
         competitor.filter(v => v===a).length - competitor.filter(v => v===b).length
       ).pop() : "";
-  const apVis = hoardings.filter(h => h.is_asian_paints).map(h => h.visibility_score);
+  const apVis = hoardings.filter(h => h.is_zudio).map(h => h.visibility_score);
   const avgApVis = apVis.length ? apVis.reduce((s,v)=>s+v,0) / apVis.length : 0;
-  const dom = overall.asian_paints_dominance_rating || 0;
+  const dom = overall.zudio_dominance_rating || 0;
   const band = dom <= 3 ? "Low" : dom >= 7 ? "High" : "Medium";
 
   const feature = {
@@ -771,7 +771,7 @@ async function addFeature(title, lat, lon, aiResult) {
       lat:                 lat,
       lon:                 lon,
       ap_dominance:        dom,
-      ap_hoarding_count:   overall.asian_paints_hoarding_count || 0,
+      ap_hoarding_count:   overall.zudio_hoarding_count || 0,
       comp_hoarding_count: overall.competitor_hoarding_count   || 0,
       total_hoardings:     hoardings.length,
       obstructed_count:    obstructed,
